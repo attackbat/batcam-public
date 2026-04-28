@@ -1,0 +1,25 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Flash and Monitor BatCam",
+			"type": "shell",
+			"command": "platformio",
+			"args": [
+				"run",
+				"-e",
+				"seeed_xiao_esp32s3",
+				"-t",
+				"upload",
+				"&&",
+				"platformio",
+				"device",
+				"monitor",
+				"-b",
+				"115200"
+			],
+			"isBackground": true,
+			"group": "build"
+		}
+	]
+}

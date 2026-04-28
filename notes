@@ -1,0 +1,6 @@
+// 1. YOUR WIFI (Phone Hotspot)
+const char* WIFI_SSID = "Verizon-SM-G998U-b330"; 
+const char* WIFI_PASS = "gsdq932/";
+
+// 2. TAILSCALE AUTH KEY (tskey-auth-...)
+const char* TS_AUTH_KEY = "tskey-auth-kPEhroRsP521CNTRL-b5gHHFZLTD7rvS2R313iD7eDb8hpPrbE"; 
