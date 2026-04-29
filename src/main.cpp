@@ -282,7 +282,7 @@ void setup() {
   wm.addParameter(&custom_husarnet);
 
   Serial.println("[*] Seeking known networks. Fallback AP: BATCAM-SETUP");
-  if (!wm.autoConnect("BATCAM-SETUP", "oracle123")) {
+  if (!wm.autoConnect("BATCAM-SETUP", "changeme123")) {
     Serial.println("[-] Failed to connect and hit timeout. Rebooting.");
     ESP.restart();
   }

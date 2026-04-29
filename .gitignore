@@ -18,3 +18,12 @@
 # OS cruft
 .DS_Store
 Thumbs.db
+
+# Local scratchpad / secrets — never commit
+notes
+
+# Python runtime/cache artifacts
+__pycache__/
+*.pyc
+.venv/
+venv/
