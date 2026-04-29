@@ -2,8 +2,8 @@
 #include <FS.h>
 #include <LittleFS.h>
 #include "esp_camera.h"
-#include "esp_http_server.h" 
-#include <WiFiManager.h> 
+#include "esp_http_server.h"
+#include <WiFi.h>
 #include <ArduinoJson.h>
 #include <husarnet.h>
 
@@ -35,9 +35,14 @@
 #define HREF_GPIO_NUM     47
 #define PCLK_GPIO_NUM     13
 
+// Setup AP — change SETUP_AP_PASS before flashing if desired
+#define SETUP_AP_SSID  "BATCAM-SETUP"
+#define SETUP_AP_PASS  "batcam123"
+
 const char* HOSTNAME = "batcam-zero";
-char husarnet_code[60] = ""; 
-bool shouldSaveConfig = false;
+char wifi_ssid[64]     = "";
+char wifi_pass[64]     = "";
+char husarnet_code[80] = "";
 HusarnetClient* husarnetClient = NULL;
 
 httpd_handle_t stream_httpd = NULL;
@@ -51,11 +56,6 @@ bool light_state = false;
 unsigned long last_check = 0;
 
 // ================= UTILITIES =================
-void saveConfigCallback() {
-  Serial.println("[!] Configuration changed, flagging for save.");
-  shouldSaveConfig = true;
-}
-
 float getBatteryVoltage() {
     int raw = analogRead(BAT_PIN);
     return (raw / 4095.0) * 3.3 * 2.0; 
@@ -83,38 +83,229 @@ void updateHardwareLogic() {
 
 // ================= FILESYSTEM LOGIC =================
 void loadCredentials() {
-  if (LittleFS.begin(true)) {
-    if (LittleFS.exists("/config.json")) {
-      File configFile = LittleFS.open("/config.json", "r");
-      if (configFile) {
-        size_t size = configFile.size();
-        std::unique_ptr<char[]> buf(new char[size]);
-        configFile.readBytes(buf.get(), size);
-        StaticJsonDocument<256> doc;
-        auto error = deserializeJson(doc, buf.get());
-        if (!error) {
-          strcpy(husarnet_code, doc["husarnet_code"] | "");
-          Serial.println("[+] Loaded Husarnet code from vault.");
-        }
-      }
-    }
-  } else {
-    Serial.println("[-] Failed to mount FS");
+  if (!LittleFS.begin(true)) { Serial.println("[-] Failed to mount FS"); return; }
+  if (!LittleFS.exists("/config.json")) return;
+  File f = LittleFS.open("/config.json", "r");
+  if (!f) return;
+  size_t size = f.size();
+  std::unique_ptr<char[]> buf(new char[size + 1]);
+  f.readBytes(buf.get(), size);
+  buf[size] = '\0';
+  f.close();
+  StaticJsonDocument<512> doc;
+  if (!deserializeJson(doc, buf.get())) {
+    strlcpy(wifi_ssid,      doc["ssid"]          | "", sizeof(wifi_ssid));
+    strlcpy(wifi_pass,      doc["pass"]          | "", sizeof(wifi_pass));
+    strlcpy(husarnet_code,  doc["husarnet_code"] | "", sizeof(husarnet_code));
+    Serial.println("[+] Credentials loaded from vault.");
   }
 }
 
 void saveCredentials() {
-  Serial.println("[+] Saving config to vault...");
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<512> doc;
+  doc["ssid"]          = wifi_ssid;
+  doc["pass"]          = wifi_pass;
   doc["husarnet_code"] = husarnet_code;
-  File configFile = LittleFS.open("/config.json", "w");
-  if (!configFile) {
-    Serial.println("[-] Failed to open config file for writing");
-    return;
-  }
-  serializeJson(doc, configFile);
-  configFile.close();
+  File f = LittleFS.open("/config.json", "w");
+  if (!f) { Serial.println("[-] Failed to open config for write"); return; }
+  serializeJson(doc, f);
+  f.close();
+  Serial.println("[+] Credentials saved.");
 }
+
+// ================= SETUP AP PORTAL =================
+static void url_decode(char *dst, const char *src, size_t max) {
+  size_t i = 0;
+  while (*src && i < max - 1) {
+    if (*src == '%' && src[1] && src[2]) {
+      char hex[3] = { src[1], src[2], '\0' };
+      dst[i++] = (char)strtol(hex, nullptr, 16);
+      src += 3;
+    } else if (*src == '+') {
+      dst[i++] = ' '; src++;
+    } else {
+      dst[i++] = *src++;
+    }
+  }
+  dst[i] = '\0';
+}
+
+static const char* SETUP_HTML_HEAD = R"html(<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BatCam Setup</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0f1723;color:#dbe9ff;font-family:monospace;padding:20px}
+.wrap{max-width:480px;margin:auto}
+h1{color:#59d4a7;margin-bottom:4px}
+.sub{color:#89a2c4;margin-top:0;margin-bottom:20px;font-size:14px}
+.card{background:#162232;border:1px solid #2a4362;border-radius:12px;padding:18px;margin-bottom:16px}
+.card b{color:#59d4a7}
+label{display:block;color:#89a2c4;font-size:13px;margin-top:14px;margin-bottom:5px}
+label:first-of-type{margin-top:8px}
+input{width:100%;padding:10px 12px;background:#0f1723;border:1px solid #2a4362;border-radius:8px;color:#dbe9ff;font-size:14px}
+input:focus{outline:none;border-color:#59d4a7}
+.hint{font-size:12px;color:#4a6a8a;margin:5px 0 0}
+.chip{display:inline-block;background:#1f4f45;border:1px solid #2f6d61;border-radius:999px;padding:2px 10px;font-size:12px;color:#59d4a7;margin-top:6px}
+.btn{width:100%;padding:13px;margin-top:8px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;letter-spacing:.5px}
+.btn-save{background:#1a4f3f;color:#59d4a7;border:1px solid #2f6d61}
+.btn-save:hover{background:#225c4a}
+.btn-reboot{background:#162232;color:#89a2c4;border:1px solid #2a4362}
+.btn-reboot:hover{background:#1e2d3f}
+</style>
+</head><body><div class="wrap">
+<h1>BatCam Setup</h1>
+<p class="sub">Connect to WiFi and optionally join the Husarnet VPN mesh.<br>Device reboots after saving.</p>
+<form action="/save" method="POST">
+<div class="card"><b>WiFi</b>
+<label>Network SSID</label>
+<input name="ssid" type="text" placeholder="Enter WiFi name" value=")html";
+
+static const char* SETUP_HTML_MID1 = R"html(">
+<label>Password</label>
+<input name="pass" type="password" placeholder=")html";
+
+static const char* SETUP_HTML_MID2 = R"html(">
+<p class="hint">Leave password blank to keep the current one.</p>
+</div>
+<div class="card"><b>Husarnet VPN</b> <span style="color:#89a2c4;font-size:12px">(optional)</span>
+<label>Join Code</label>
+<input name="husarnet_code" type="text" placeholder=")html";
+
+static const char* SETUP_HTML_TAIL = R"html(">
+<p class="hint">Found at <b>app.husarnet.com</b> &rarr; your network &rarr; Add element. Leave blank to keep current.</p>
+</div>
+<button class="btn btn-save" type="submit">&#128190; Save &amp; Reboot</button>
+</form>
+<form action="/reboot" method="POST" style="margin-top:10px">
+<button class="btn btn-reboot" type="submit">&#8635; Reboot Only</button>
+</form>
+</div></body></html>)html";
+
+static esp_err_t setup_index_handler(httpd_req_t *req) {
+  httpd_resp_set_type(req, "text/html");
+  // Part 1 — up to ssid value=""
+  httpd_resp_send_chunk(req, SETUP_HTML_HEAD, strlen(SETUP_HTML_HEAD));
+  // Inject current SSID (safe: no special HTML chars expected in an SSID, but sanitise anyway)
+  char ssid_safe[68] = {0};
+  size_t j = 0;
+  for (size_t i = 0; wifi_ssid[i] && j < sizeof(ssid_safe) - 1; i++) {
+    // Strip quotes so they can't break the HTML attribute
+    if (wifi_ssid[i] != '"' && wifi_ssid[i] != '<' && wifi_ssid[i] != '>') ssid_safe[j++] = wifi_ssid[i];
+  }
+  ssid_safe[j] = '\0';
+  httpd_resp_send_chunk(req, ssid_safe, strlen(ssid_safe));
+  // Part 2 — up to password placeholder
+  httpd_resp_send_chunk(req, SETUP_HTML_MID1, strlen(SETUP_HTML_MID1));
+  const char* pass_hint = wifi_pass[0] ? "Enter new password or leave blank to keep current" : "Enter WiFi password";
+  httpd_resp_send_chunk(req, pass_hint, strlen(pass_hint));
+  // Part 3 — up to husarnet placeholder
+  httpd_resp_send_chunk(req, SETUP_HTML_MID2, strlen(SETUP_HTML_MID2));
+  const char* hn_hint = husarnet_code[0] ? "Code is set — enter new code to replace" : "Enter Husarnet join code";
+  httpd_resp_send_chunk(req, hn_hint, strlen(hn_hint));
+  // Part 4 — close
+  httpd_resp_send_chunk(req, SETUP_HTML_TAIL, strlen(SETUP_HTML_TAIL));
+  httpd_resp_send_chunk(req, nullptr, 0);
+  return ESP_OK;
+}
+
+static esp_err_t setup_save_handler(httpd_req_t *req) {
+  char raw[800] = {0};
+  int len = (int)req->content_len;
+  if (len <= 0 || len >= (int)sizeof(raw)) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad request");
+    return ESP_FAIL;
+  }
+  int received = httpd_req_recv(req, raw, len);
+  if (received <= 0) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Read error");
+    return ESP_FAIL;
+  }
+  raw[received] = '\0';
+
+  // Extract URL-encoded fields
+  char enc_ssid[128] = {0}, enc_pass[192] = {0}, enc_hn[192] = {0};
+  httpd_query_key_value(raw, "ssid",          enc_ssid, sizeof(enc_ssid));
+  httpd_query_key_value(raw, "pass",          enc_pass, sizeof(enc_pass));
+  httpd_query_key_value(raw, "husarnet_code", enc_hn,   sizeof(enc_hn));
+
+  char dec_ssid[64] = {0}, dec_pass[64] = {0}, dec_hn[80] = {0};
+  url_decode(dec_ssid, enc_ssid, sizeof(dec_ssid));
+  url_decode(dec_pass, enc_pass, sizeof(dec_pass));
+  url_decode(dec_hn,   enc_hn,   sizeof(dec_hn));
+
+  if (strlen(dec_ssid) > 0) strlcpy(wifi_ssid,     dec_ssid, sizeof(wifi_ssid));
+  if (strlen(dec_pass) > 0) strlcpy(wifi_pass,     dec_pass, sizeof(wifi_pass));
+  if (strlen(dec_hn)   > 0) strlcpy(husarnet_code, dec_hn,   sizeof(husarnet_code));
+
+  saveCredentials();
+
+  static const char* saved_html =
+    "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<style>body{background:#0f1723;color:#59d4a7;font-family:monospace;text-align:center;padding:40px}</style>"
+    "</head><body><h2>&#10003; Saved!</h2><p>Rebooting BatCam...</p></body></html>";
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_send(req, saved_html, strlen(saved_html));
+  delay(1200);
+  ESP.restart();
+  return ESP_OK;
+}
+
+static esp_err_t setup_reboot_handler(httpd_req_t *req) {
+  static const char* reboot_html =
+    "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<style>body{background:#0f1723;color:#89a2c4;font-family:monospace;text-align:center;padding:40px}</style>"
+    "</head><body><h2>Rebooting...</h2></body></html>";
+  httpd_resp_set_type(req, "text/html");
+  httpd_resp_send(req, reboot_html, strlen(reboot_html));
+  delay(800);
+  ESP.restart();
+  return ESP_OK;
+}
+
+void startSetupMode() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(SETUP_AP_SSID, SETUP_AP_PASS);
+  Serial.printf("[*] Setup AP: %s  Pass: %s\n", SETUP_AP_SSID, SETUP_AP_PASS);
+  Serial.println("[*] Connect and open http://192.168.4.1");
+
+  httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+  cfg.server_port = 80;
+  httpd_handle_t setup_httpd = NULL;
+
+  httpd_uri_t uri_index  = { .uri = "/",      .method = HTTP_GET,  .handler = setup_index_handler,  .user_ctx = NULL };
+  httpd_uri_t uri_save   = { .uri = "/save",  .method = HTTP_POST, .handler = setup_save_handler,   .user_ctx = NULL };
+  httpd_uri_t uri_reboot = { .uri = "/reboot",.method = HTTP_POST, .handler = setup_reboot_handler, .user_ctx = NULL };
+
+  if (httpd_start(&setup_httpd, &cfg) == ESP_OK) {
+    httpd_register_uri_handler(setup_httpd, &uri_index);
+    httpd_register_uri_handler(setup_httpd, &uri_save);
+    httpd_register_uri_handler(setup_httpd, &uri_reboot);
+  }
+  // Block here — the handlers trigger reboot on save
+  while (true) { delay(1000); }
+}
+
+bool connectToWiFi() {
+  if (strlen(wifi_ssid) == 0) return false;
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifi_ssid, wifi_pass);
+  Serial.printf("[*] Connecting to %s", wifi_ssid);
+  for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) {
+    delay(500); Serial.print(".");
+  }
+  Serial.println();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("[+] WiFi connected. IP: %s\n", WiFi.localIP().toString().c_str());
+    return true;
+  }
+  Serial.println("[-] WiFi connection failed.");
+  return false;
+}
+
+
 
 // ================= SERVER HANDLERS =================
 #define PART_BOUNDARY "123456789000000000000987654321"
@@ -271,25 +462,14 @@ void setup() {
   config.xclk_freq_hz = 20000000; config.frame_size = FRAMESIZE_HD;
   config.pixel_format = PIXFORMAT_JPEG; config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM; config.jpeg_quality = 12; config.fb_count = 2;
-  
+
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) Serial.printf("[-] Camera init failed: 0x%x\n", err);
 
-  WiFiManager wm;
-  wm.setSaveConfigCallback(saveConfigCallback);
-  
-  WiFiManagerParameter custom_husarnet("husarnet", "Husarnet Join Code", husarnet_code, 60);
-  wm.addParameter(&custom_husarnet);
-
-  Serial.println("[*] Seeking known networks. Fallback AP: BATCAM-SETUP");
-  if (!wm.autoConnect("BATCAM-SETUP", "changeme123")) {
-    Serial.println("[-] Failed to connect and hit timeout. Rebooting.");
-    ESP.restart();
-  }
-
-  if (shouldSaveConfig) {
-    strcpy(husarnet_code, custom_husarnet.getValue());
-    saveCredentials();
+  // If no WiFi credentials are stored, or connection fails → enter setup portal
+  if (!connectToWiFi()) {
+    Serial.println("[!] No WiFi or connection failed. Starting setup portal.");
+    startSetupMode(); // blocks until save+reboot
   }
 
   if (strlen(husarnet_code) > 10) {
@@ -297,7 +477,7 @@ void setup() {
     husarnetClient = husarnet_init();
     husarnet_join(husarnetClient, HOSTNAME, husarnet_code);
   } else {
-    Serial.println("[-] No valid Husarnet code found. Operating in local mode only.");
+    Serial.println("[-] No Husarnet code — local mode only.");
   }
 
   startCameraServer();
