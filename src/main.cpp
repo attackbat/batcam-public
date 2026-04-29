@@ -3,6 +3,7 @@
 #include <LittleFS.h>
 #include "esp_camera.h"
 #include "esp_http_server.h"
+#include <Network.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include <husarnet.h>
