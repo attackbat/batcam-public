@@ -5,6 +5,7 @@
 #include "esp_http_server.h"
 #include <Network.h>
 #include <WiFi.h>
+#include <DNSServer.h>
 #include <ArduinoJson.h>
 #include <husarnet.h>
 
@@ -45,6 +46,7 @@ char wifi_ssid[64]     = "";
 char wifi_pass[64]     = "";
 char husarnet_code[80] = "";
 HusarnetClient* husarnetClient = NULL;
+DNSServer setupDns;
 
 httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
@@ -269,8 +271,10 @@ static esp_err_t setup_reboot_handler(httpd_req_t *req) {
 void startSetupMode() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(SETUP_AP_SSID, SETUP_AP_PASS);
+  IPAddress apIp = WiFi.softAPIP();
+  setupDns.start(53, "*", apIp);
   Serial.printf("[*] Setup AP: %s  Pass: %s\n", SETUP_AP_SSID, SETUP_AP_PASS);
-  Serial.println("[*] Connect and open http://192.168.4.1");
+  Serial.printf("[*] Setup portal URLs: http://%s and http://router.setup\n", apIp.toString().c_str());
 
   httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
   cfg.server_port = 80;
@@ -286,7 +290,10 @@ void startSetupMode() {
     httpd_register_uri_handler(setup_httpd, &uri_reboot);
   }
   // Block here — the handlers trigger reboot on save
-  while (true) { delay(1000); }
+  while (true) {
+    setupDns.processNextRequest();
+    delay(5);
+  }
 }
 
 bool connectToWiFi() {

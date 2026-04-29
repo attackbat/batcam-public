@@ -16,11 +16,12 @@ An ESP32-S3 (Seeed XIAO with PSRAM) camera node that streams MJPEG over a Husarn
 
 ## Features
 
-- MJPEG stream at HD resolution served on port 8000
+- MJPEG stream at UXGA-capable OV2640 defaults (runtime stream on port 8000)
 - Control page (toggle light, night-vision mode) on port 80
 - Temperature-controlled fan via PWM
 - Battery voltage telemetry
-- WiFi provisioning via WiFiManager captive portal (AP: `BATCAM-SETUP`)
+- Custom setup AP portal for WiFi + Husarnet provisioning (AP: `BATCAM-SETUP`)
+- Captive DNS in setup mode (`router.setup` and `192.168.4.1`)
 - Husarnet P2P VPN join code stored securely in LittleFS
 
 ---
@@ -32,12 +33,13 @@ An ESP32-S3 (Seeed XIAO with PSRAM) camera node that streams MJPEG over a Husarn
 - [PlatformIO](https://platformio.org/) (VS Code extension recommended)
 - Board: `seeed_xiao_esp32s3`
 
-### Configure AP password
+### Configure setup AP
 
 Before flashing, open `src/main.cpp` and set your own setup AP password:
 
 ```cpp
-wm.autoConnect("BATCAM-SETUP", "YOUR_AP_PASSWORD");
+#define SETUP_AP_SSID "BATCAM-SETUP"
+#define SETUP_AP_PASS "YOUR_AP_PASSWORD"
 ```
 
 ### Build & Flash
@@ -50,9 +52,15 @@ pio device monitor -b 115200
 ### First boot
 
 1. BatCam will create a WiFi AP named `BATCAM-SETUP`.
-2. Connect to it and navigate to `192.168.4.1`.
-3. Enter your WiFi credentials and optionally your Husarnet join code.
-4. BatCam will reboot and join your network (and VPN if a code was provided).
+2. Connect to it and open `http://router.setup`.
+3. If captive DNS does not resolve on your client, use `http://192.168.4.1`.
+4. Enter WiFi credentials and optionally a Husarnet join code.
+5. Press **Save & Reboot**.
+6. BatCam reboots and joins WiFi (and Husarnet if a code is provided).
+
+### Recovery mode
+
+If saved WiFi fails to connect on boot, BatCam automatically re-enters setup AP mode.
 
 ---
 
