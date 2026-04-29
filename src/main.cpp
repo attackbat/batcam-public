@@ -459,12 +459,38 @@ void setup() {
   config.pin_vsync = VSYNC_GPIO_NUM; config.pin_href = HREF_GPIO_NUM;
   config.pin_sccb_sda = SIOD_GPIO_NUM; config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM; config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000; config.frame_size = FRAMESIZE_HD;
+  config.xclk_freq_hz = 20000000; config.frame_size = FRAMESIZE_UXGA; // OV2640 max: 1600x1200
   config.pixel_format = PIXFORMAT_JPEG; config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM; config.jpeg_quality = 12; config.fb_count = 2;
 
   esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) Serial.printf("[-] Camera init failed: 0x%x\n", err);
+  if (err != ESP_OK) {
+    Serial.printf("[-] Camera init failed: 0x%x\n", err);
+  } else {
+    // OV2640 post-init sensor defaults
+    sensor_t * cam = esp_camera_sensor_get();
+    cam->set_brightness(cam, 0);
+    cam->set_contrast(cam, 0);
+    cam->set_saturation(cam, 0);
+    cam->set_special_effect(cam, 0);   // 0 = no effect
+    cam->set_whitebal(cam, 1);         // auto white balance on
+    cam->set_awb_gain(cam, 1);
+    cam->set_wb_mode(cam, 0);          // 0 = auto
+    cam->set_exposure_ctrl(cam, 1);    // AEC on
+    cam->set_aec2(cam, 0);
+    cam->set_ae_level(cam, 0);
+    cam->set_gain_ctrl(cam, 1);        // AGC on
+    cam->set_agc_gain(cam, 0);
+    cam->set_gainceiling(cam, (gainceiling_t)2); // 4x ceiling — balanced for low-light
+    cam->set_bpc(cam, 1);              // bad pixel correction on
+    cam->set_wpc(cam, 1);              // white pixel correction on
+    cam->set_raw_gma(cam, 1);          // gamma on
+    cam->set_lenc(cam, 1);             // lens correction on
+    cam->set_hmirror(cam, 0);
+    cam->set_vflip(cam, 0);
+    cam->set_dcw(cam, 1);
+    Serial.println("[+] OV2640 sensor defaults applied.");
+  }
 
   // If no WiFi credentials are stored, or connection fails → enter setup portal
   if (!connectToWiFi()) {
