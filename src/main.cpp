@@ -158,9 +158,10 @@ h1{color:#59d4a7;margin-bottom:2px;font-size:22px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
 label{display:block;color:#89a2c4;font-size:13px;margin-top:12px;margin-bottom:4px}
 label:first-of-type{margin-top:6px}
-input{width:100%;padding:9px 11px;background:#0f1723;border:1px solid #2a4362;border-radius:8px;color:#dbe9ff;font-size:14px}
-input:focus{outline:none;border-color:#59d4a7}
+
 .hint{font-size:11px;color:#4a6a8a;margin:4px 0 0}
+input{width:100%;padding:9px 11px;background:#1a2a3e;border:1.5px solid #3a6a9a;border-radius:8px;color:#dbe9ff;font-size:14px;outline:none}
+input:focus{border-color:#59d4a7}
 .btn{width:100%;padding:12px;margin-top:8px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:.4px}
 .btn-ctrl{padding:10px;margin-top:0;font-size:13px}
 .btn-save{background:#1a4f3f;color:#59d4a7;border:1px solid #2f6d61}
@@ -175,7 +176,7 @@ input:focus{outline:none;border-color:#59d4a7}
 <p class="sub">Live diagnostics &amp; WiFi provisioning portal</p>
 <div class="card">
 <b>Camera Feed</b>
-<img id="feed" class="feed" src="/stream" alt="Stream loading...">
+<img id="feed" class="feed" src="" alt="Connecting to stream...">
 <div class="hud">
 <div class="stat"><span>Battery</span><strong id="volts">--</strong></div>
 <div class="stat"><span>Temp</span><strong id="temp">--</strong></div>
@@ -222,7 +223,12 @@ function upd(d){
 function cmd(a){
   fetch('/cmd?action='+a).then(r=>r.json()).then(upd).catch(()=>{});
 }
-setInterval(()=>fetch('/status').then(r=>r.json()).then(upd).catch(()=>{}),2000);
+// Stream is on port 8000; build URL from current hostname
+document.getElementById('feed').src='http://'+location.hostname+':8000/stream';
+// Poll telemetry immediately then every 2s
+function poll(){fetch('/status').then(r=>r.json()).then(upd).catch(()=>{});}
+poll();
+setInterval(poll,2000);
 </script>
 </body></html>)html";
 
@@ -343,9 +349,15 @@ void startSetupMode() {
   if (httpd_start(&setup_stream_httpd, &scfg) == ESP_OK) {
     httpd_register_uri_handler(setup_stream_httpd, &uri_stream);
   }
+  // Initial telemetry read so /status returns real values immediately
+  updateHardwareLogic();
   // Block here — the handlers trigger reboot on save
   while (true) {
     setupDns.processNextRequest();
+    if (millis() - last_check > 2000) {
+      last_check = millis();
+      updateHardwareLogic();
+    }
     delay(5);
   }
 }
