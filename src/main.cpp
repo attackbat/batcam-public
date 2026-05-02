@@ -117,6 +117,10 @@ void saveCredentials() {
 }
 
 // ================= SETUP AP PORTAL =================
+// Forward declarations so setup mode can reference handlers defined later
+static esp_err_t cmd_handler(httpd_req_t *req);
+static esp_err_t stream_handler(httpd_req_t *req);
+
 static void url_decode(char *dst, const char *src, size_t max) {
   size_t i = 0;
   while (*src && i < max - 1) {
@@ -140,27 +144,49 @@ static const char* SETUP_HTML_HEAD = R"html(<!DOCTYPE html>
 <title>BatCam Setup</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;background:#0f1723;color:#dbe9ff;font-family:monospace;padding:20px}
-.wrap{max-width:480px;margin:auto}
-h1{color:#59d4a7;margin-bottom:4px}
-.sub{color:#89a2c4;margin-top:0;margin-bottom:20px;font-size:14px}
-.card{background:#162232;border:1px solid #2a4362;border-radius:12px;padding:18px;margin-bottom:16px}
+body{margin:0;background:#0f1723;color:#dbe9ff;font-family:monospace;padding:16px}
+.wrap{max-width:520px;margin:auto}
+h1{color:#59d4a7;margin-bottom:2px;font-size:22px}
+.sub{color:#89a2c4;margin-top:0;margin-bottom:14px;font-size:13px}
+.card{background:#162232;border:1px solid #2a4362;border-radius:12px;padding:14px 16px;margin-bottom:12px}
 .card b{color:#59d4a7}
-label{display:block;color:#89a2c4;font-size:13px;margin-top:14px;margin-bottom:5px}
-label:first-of-type{margin-top:8px}
-input{width:100%;padding:10px 12px;background:#0f1723;border:1px solid #2a4362;border-radius:8px;color:#dbe9ff;font-size:14px}
+.feed{width:100%;border-radius:8px;background:#07101d;display:block;min-height:180px}
+.hud{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.stat{background:#0f1e30;border:1px solid #2a4362;border-radius:8px;padding:8px 10px;font-size:13px;display:flex;justify-content:space-between}
+.stat span{color:#89a2c4}
+.stat strong{color:#59d4a7}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+label{display:block;color:#89a2c4;font-size:13px;margin-top:12px;margin-bottom:4px}
+label:first-of-type{margin-top:6px}
+input{width:100%;padding:9px 11px;background:#0f1723;border:1px solid #2a4362;border-radius:8px;color:#dbe9ff;font-size:14px}
 input:focus{outline:none;border-color:#59d4a7}
-.hint{font-size:12px;color:#4a6a8a;margin:5px 0 0}
-.chip{display:inline-block;background:#1f4f45;border:1px solid #2f6d61;border-radius:999px;padding:2px 10px;font-size:12px;color:#59d4a7;margin-top:6px}
-.btn{width:100%;padding:13px;margin-top:8px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;letter-spacing:.5px}
+.hint{font-size:11px;color:#4a6a8a;margin:4px 0 0}
+.btn{width:100%;padding:12px;margin-top:8px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:.4px}
+.btn-ctrl{padding:10px;margin-top:0;font-size:13px}
 .btn-save{background:#1a4f3f;color:#59d4a7;border:1px solid #2f6d61}
 .btn-save:hover{background:#225c4a}
 .btn-reboot{background:#162232;color:#89a2c4;border:1px solid #2a4362}
 .btn-reboot:hover{background:#1e2d3f}
+.btn-act{background:#1b2d43;color:#dbe9ff;border:1px solid #2a4362}
+.btn-act:hover{background:#233a56}
 </style>
 </head><body><div class="wrap">
-<h1>BatCam Setup</h1>
-<p class="sub">Connect to WiFi and optionally join the Husarnet VPN mesh.<br>Device reboots after saving.</p>
+<h1>&#x1F987; BatCam Setup</h1>
+<p class="sub">Live diagnostics &amp; WiFi provisioning portal</p>
+<div class="card">
+<b>Camera Feed</b>
+<img id="feed" class="feed" src="/stream" alt="Stream loading...">
+<div class="hud">
+<div class="stat"><span>Battery</span><strong id="volts">--</strong></div>
+<div class="stat"><span>Temp</span><strong id="temp">--</strong></div>
+<div class="stat"><span>Fan</span><strong id="fan">--</strong></div>
+<div class="stat"><span>Light</span><strong id="light_st">--</strong></div>
+</div>
+<div class="row2" style="margin-top:8px">
+<button class="btn btn-act btn-ctrl" onclick="cmd('light')">Toggle Light</button>
+<button class="btn btn-act btn-ctrl" onclick="cmd('night')">Toggle NVG</button>
+</div>
+</div>
 <form action="/save" method="POST">
 <div class="card"><b>WiFi</b>
 <label>Network SSID</label>
@@ -171,21 +197,34 @@ static const char* SETUP_HTML_MID1 = R"html(">
 <input name="pass" type="password" placeholder=")html";
 
 static const char* SETUP_HTML_MID2 = R"html(">
-<p class="hint">Leave password blank to keep the current one.</p>
+<p class="hint">Leave blank to keep current password.</p>
 </div>
 <div class="card"><b>Husarnet VPN</b> <span style="color:#89a2c4;font-size:12px">(optional)</span>
 <label>Join Code</label>
 <input name="husarnet_code" type="text" placeholder=")html";
 
 static const char* SETUP_HTML_TAIL = R"html(">
-<p class="hint">Found at <b>app.husarnet.com</b> &rarr; your network &rarr; Add element. Leave blank to keep current.</p>
+<p class="hint">Found at <b>app.husarnet.com</b> &rarr; your network &rarr; Add element.</p>
 </div>
 <button class="btn btn-save" type="submit">&#128190; Save &amp; Reboot</button>
 </form>
-<form action="/reboot" method="POST" style="margin-top:10px">
+<form action="/reboot" method="POST" style="margin-top:8px">
 <button class="btn btn-reboot" type="submit">&#8635; Reboot Only</button>
 </form>
-</div></body></html>)html";
+</div>
+<script>
+function upd(d){
+  if(typeof d.volts==='number') document.getElementById('volts').textContent=d.volts.toFixed(2)+' V';
+  if(typeof d.temp==='number')  document.getElementById('temp').textContent=d.temp.toFixed(1)+' C';
+  if(typeof d.fan==='number')   document.getElementById('fan').textContent=d.fan+'%';
+  if(typeof d.light!=='undefined') document.getElementById('light_st').textContent=d.light?'ON':'OFF';
+}
+function cmd(a){
+  fetch('/cmd?action='+a).then(r=>r.json()).then(upd).catch(()=>{});
+}
+setInterval(()=>fetch('/status').then(r=>r.json()).then(upd).catch(()=>{}),2000);
+</script>
+</body></html>)html";
 
 static esp_err_t setup_index_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
@@ -278,16 +317,31 @@ void startSetupMode() {
 
   httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
   cfg.server_port = 80;
+  cfg.max_uri_handlers = 10;
   httpd_handle_t setup_httpd = NULL;
 
-  httpd_uri_t uri_index  = { .uri = "/",      .method = HTTP_GET,  .handler = setup_index_handler,  .user_ctx = NULL };
-  httpd_uri_t uri_save   = { .uri = "/save",  .method = HTTP_POST, .handler = setup_save_handler,   .user_ctx = NULL };
-  httpd_uri_t uri_reboot = { .uri = "/reboot",.method = HTTP_POST, .handler = setup_reboot_handler, .user_ctx = NULL };
+  httpd_uri_t uri_index  = { .uri = "/",       .method = HTTP_GET,  .handler = setup_index_handler,  .user_ctx = NULL };
+  httpd_uri_t uri_save   = { .uri = "/save",   .method = HTTP_POST, .handler = setup_save_handler,   .user_ctx = NULL };
+  httpd_uri_t uri_reboot = { .uri = "/reboot", .method = HTTP_POST, .handler = setup_reboot_handler, .user_ctx = NULL };
+  httpd_uri_t uri_status = { .uri = "/status", .method = HTTP_GET,  .handler = cmd_handler,          .user_ctx = NULL };
+  httpd_uri_t uri_cmd    = { .uri = "/cmd",    .method = HTTP_GET,  .handler = cmd_handler,          .user_ctx = NULL };
+
+  // Stream server on port 8000 (same as normal mode)
+  httpd_config_t scfg = HTTPD_DEFAULT_CONFIG();
+  scfg.server_port = 8000;
+  scfg.ctrl_port = 32769;
+  httpd_handle_t setup_stream_httpd = NULL;
+  httpd_uri_t uri_stream = { .uri = "/stream", .method = HTTP_GET, .handler = stream_handler, .user_ctx = NULL };
 
   if (httpd_start(&setup_httpd, &cfg) == ESP_OK) {
     httpd_register_uri_handler(setup_httpd, &uri_index);
     httpd_register_uri_handler(setup_httpd, &uri_save);
     httpd_register_uri_handler(setup_httpd, &uri_reboot);
+    httpd_register_uri_handler(setup_httpd, &uri_status);
+    httpd_register_uri_handler(setup_httpd, &uri_cmd);
+  }
+  if (httpd_start(&setup_stream_httpd, &scfg) == ESP_OK) {
+    httpd_register_uri_handler(setup_stream_httpd, &uri_stream);
   }
   // Block here — the handlers trigger reboot on save
   while (true) {
@@ -418,8 +472,9 @@ static esp_err_t cmd_handler(httpd_req_t *req) {
       }
     }
   }
-  char json[128];
-  snprintf(json, sizeof(json), "{\"volts\":%.2f,\"temp\":%.1f}", battery_volts, getBoardTemp());
+  char json[160];
+  snprintf(json, sizeof(json), "{\"volts\":%.2f,\"temp\":%.1f,\"fan\":%d,\"light\":%s}",
+    battery_volts, getBoardTemp(), fan_percent, light_state ? "true" : "false");
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, json, strlen(json));
   return ESP_OK;
