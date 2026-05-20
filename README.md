@@ -4,6 +4,16 @@ An ESP32-S3 (Seeed XIAO with PSRAM) camera node that streams MJPEG over a Husarn
 
 ---
 
+## Kickstarter
+
+The BatCam Development Kit campaign is now approved on Kickstarter.
+
+Support the project and follow updates here:
+
+https://www.kickstarter.com/projects/attackbat/batcam-development-kit
+
+---
+
 ## Hardware
 
 | Component | Details |
