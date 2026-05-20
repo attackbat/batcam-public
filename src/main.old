@@ -12,7 +12,7 @@
 
 // ================= HARDWARE DEFINITIONS =================
 #define BAT_PIN           D0   
-#define FAN_PIN           D7   
+#define FAN_PIN           D1   
 #define LIGHT_PIN         D3   
 
 #define FAN_PWM_CHANNEL   4
