@@ -1,113 +1,32 @@
-# BatCam
+# B.A.T.C.A.M. Development Kit
 
-An ESP32-S3 (Seeed XIAO with PSRAM) camera node that streams MJPEG over a Husarnet VPN mesh and exposes a local control interface, paired with **Lucius** — a Python/Flask dashboard that aggregates multiple BatCam nodes.
+[![Kickstarter Campaign](https://img.shields.io/badge/Kickstarter-Live%20Now-brightgreen?style=for-the-badge&logo=kickstarter)](https://www.kickstarter.com/projects/attackbat/1808890155)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
----
-
-## Hardware
-
-| Component | Details |
-|---|---|
-| MCU | Seeed XIAO ESP32-S3 Sense |
-| Camera | OV2640 (on-module) |
-| Display board | Waveshare S3 1.47" |
-| Storage | optional SD card |
-| VPN mesh | Husarnet |
-
-## Features
-
-- MJPEG stream at HD resolution served on port 8000
-- Control page (toggle light, night-vision mode) on port 80
-- Temperature-controlled fan via PWM
-- Battery voltage telemetry
-- WiFi provisioning via WiFiManager captive portal (AP: `BATCAM-SETUP`)
-- Husarnet P2P VPN join code stored securely in LittleFS
+> 📡 **PROJECT ANNOUNCEMENT:** The evaluation hardware for this development platform is officially open for backing. Secure an assembled prototype board or raw component tiers here: **[Get the B.A.T.C.A.M. Devkit on Kickstarter](https://www.kickstarter.com/projects/attackbat/1808890155)**.
 
 ---
 
-## Firmware Setup
+## 🛠️ System Overview
 
-### Prerequisites
+The **B.A.T.C.A.M. Development Kit** is a modular, edge-computing evaluation platform built for open-source AI vision processing and decentralized peer-to-peer telemetry networking. 
 
-- [PlatformIO](https://platformio.org/) (VS Code extension recommended)
-- Board: `seeed_xiao_esp32s3`
-
-### Configure AP password
-
-Before flashing, open `src/main.cpp` and set your own setup AP password:
-
-```cpp
-wm.autoConnect("BATCAM-SETUP", "YOUR_AP_PASSWORD");
-```
-
-### Build & Flash
-
-```bash
-pio run -e seeed_xiao_esp32s3 -t upload
-pio device monitor -b 115200
-```
-
-### First boot
-
-1. BatCam will create a WiFi AP named `BATCAM-SETUP`.
-2. Connect to it and navigate to `192.168.4.1`.
-3. Enter your WiFi credentials and optionally your Husarnet join code.
-4. BatCam will reboot and join your network (and VPN if a code was provided).
+### Core Architecture & Dependencies
+* **MCU:** Seeed Studio XIAO ESP32-S3 (Chip Revision v0.2) paired with native `esp32-camera` stacks.
+* **Memory Configuration:** Optimized using a non-standard `huge_app.csv` partition layout providing a 3.1MB application payload window to support memory-intensive local models without hitting OTA boundary limits.
+* **Decentralized Infrastructure:** Native zero-trust routing integration using C++ base layers for **Husarnet P2P overlay meshes** and centralized workstation access via secure **Tailscale** tunnels.
+* **Extensible I/O Breakout:** Built-in 2.54mm (0.1") header expansion layout separating programmatic lines (SIOC/SIOD, RESET, PWDN, XCLK) for advanced integration with peripheral sensor nodes, haptic targets, or the wrist-worn wrist computer setups.
 
 ---
 
-## Lucius Dashboard
+## 🚀 Back This Project
 
-`Lucius.py` is a Flask proxy dashboard that connects to one or more BatCam nodes over Husarnet and provides a unified camera view with controls.
+This environment is entirely dedicated to data sovereignty and custom open-source design. If you're utilizing these layout files, code modules, or dashboard components on your test bench, consider supporting the production phase.
 
-### Prerequisites
+### Available Tiers Include:
+* **Bare-Metal Kit:** High-grade raw carrier PCBs for custom through-hole field assembly and component soldering.
+* **Prototype Evaluation Board:** Hand-assembled, fully integrated testing platform featuring pre-soldered interfaces and a modular chassis footprint.
 
-```bash
-pip install -r requirements.txt
-```
-
-### Run — single BatCam
-
-```bash
-BATCAM_HOST=batcam-zero python3 Lucius.py
-```
-
-### Run — multiple BatCams
-
-```bash
-BATCAMS_JSON='[
-  {"id":"cam1","name":"Front","host":"batcam-zero","control_port":80,"stream_port":8000},
-  {"id":"cam2","name":"Back","host":"batcam-two","control_port":80,"stream_port":8000}
-]' python3 Lucius.py
-```
-
-Open `http://localhost:5000` in your browser.
-
-### Environment variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `BATCAM_HOST` | `batcam-zero` | Husarnet hostname of a single BatCam |
-| `BATCAMS_JSON` | *(unset)* | JSON array for multi-camera setup |
-| `LUCIUS_HOST` | `0.0.0.0` | Interface Lucius binds to |
-| `LUCIUS_PORT` | `5000` | Port Lucius listens on |
-| `LUCIUS_DEBUG` | `0` | Set to `1` to enable Flask debug mode |
-
----
-
-## API Reference
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/cameras` | List configured cameras |
-| GET | `/api/cameras/<id>/stream` | Proxied MJPEG stream |
-| GET | `/api/cameras/<id>/status` | Battery voltage and board temp |
-| POST | `/api/cameras/<id>/cmd/light` | Toggle light GPIO |
-| POST | `/api/cameras/<id>/cmd/night` | Toggle night-vision mode |
-| GET | `/health` | Lucius health check |
-
----
-
-## License
-
-MIT — see `LICENSE` file.
+### 🔗 Crowdfunding Registry Link
+To guarantee persistent routing through potential title modifications or custom page configurations, use our secure permanent link database hook:
+👉 **[https://www.kickstarter.com/projects/attackbat/1808890155](https://www.kickstarter.com/projects/attackbat/1808890155)**
